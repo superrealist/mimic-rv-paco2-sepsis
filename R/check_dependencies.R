@@ -1,0 +1,5 @@
+packages<-c('smcfcs','mice','jsonlite','digest','abind','posterior','sandwich','mitml','detectseparation','matrixStats')
+available<-vapply(packages,requireNamespace,logical(1),quietly=TRUE)
+for(p in packages)cat(p,if(available[p])as.character(packageVersion(p))else 'NOT INSTALLED','\n')
+if(!all(available))stop('Install missing R dependencies before running the analysis.')
+cat('R',as.character(getRversion()),'\n')

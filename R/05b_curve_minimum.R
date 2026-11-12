@@ -1,0 +1,62 @@
+source(file.path(Sys.getenv('MIMIC_CODE_ROOT','.'),'R/config.R'))
+I<-O<-file.path(OUT,'contrasts')
+source(FUN('risk_contrasts.R'))
+fixed_rcs_derivative<-function(x,k=c(30,40,55)){
+ 3*(pmax(x-k[1],0)^2-(k[3]-k[1])/(k[3]-k[2])*pmax(x-k[2],0)^2+(k[2]-k[1])/(k[3]-k[2])*pmax(x-k[3],0)^2)/(k[3]-k[1])^2
+}
+dir.create(file.path(O,'tables'),recursive=TRUE,showWarnings=FALSE)
+dir.create(file.path(O,'quality'),recursive=TRUE,showWarnings=FALSE)
+out<-list();audit<-list()
+for(tag in 'mimic'){
+ z<-readRDS(file.path(I,'private',paste0(tag,'_inference.rds')))
+ src<-z$summary$source_metadata
+ datasets<-readRDS(file.path(OUT,'primary/fits/model.rds'))$data
+ linear<-'x';nonlinear<-'xnl';exposure<-c('rv','x','xnl','rv:x','rv:xnl')
+ b<-z$coef_Q;M<-ncol(b);nm<-rownames(b)
+ base<-vapply(seq_len(M),function(m){
+  X<-model.matrix(as.formula(z$summary$formula),datasets[[m]])[,nm,drop=FALSE]
+  X[,exposure]<-0
+  drop(X%*%b[,m])
+ },numeric(nrow(datasets[[1]])))
+ risk<-function(x){
+  xx<-x
+  nn<-fixed_rcs(x)/1
+  mean(plogis(sweep(base,2,b[linear,]*xx+b[nonlinear,]*nn,'+')))
+ }
+ derivative<-function(x){
+  xx<-x
+  scale<-1
+  pp<-plogis(sweep(base,2,b[linear,]*xx+b[nonlinear,]*fixed_rcs(x)/scale,'+'))
+  slope<-(b[linear,]+b[nonlinear,]*fixed_rcs_derivative(x))/scale
+  mean(sweep(pp*(1-pp),2,slope,'*'))
+ }
+ br<-c(25,30,40,55,65)
+ seg<-lapply(seq_len(length(br)-1),function(j)optimize(risk,c(br[j],br[j+1]),tol=1e-10))
+ whole<-optimize(risk,c(25,65),tol=1e-10)
+ dg<-seq(25,65,by=.5);dy<-vapply(dg,derivative,numeric(1))
+ cross<-which(head(dy,-1)*tail(dy,-1)<0)
+ roots<-vapply(cross,function(j)uniroot(derivative,c(dg[j],dg[j+1]),tol=1e-10)$root,numeric(1))
+ candidate<-sort(unique(c(br,whole$minimum,vapply(seg,`[[`,numeric(1),'minimum'),roots)))
+ values<-vapply(candidate,risk,numeric(1));best<-which.min(values)
+ xstar<-candidate[best];rstar<-values[best]
+ grid<-z$scenarios$rv==0
+ predicted<-vapply(z$scenarios$pco2[grid],risk,numeric(1))
+ old<-rowMeans(z$risk_Q[grid,,drop=FALSE])
+ err<-max(abs(predicted-old));stopifnot(err<1e-12,rstar<=min(old)+1e-12)
+ row<-data.frame(cohort=z$cohort,rv=0,n=z$summary$N,imputations=M,range_low=25,range_high=65,
+  paco2_minimum=xstar,paco2_display=round(xstar,1),standardized_risk=rstar,
+  risk_percent=100*rstar,reference40_risk=risk(40),risk_difference_vs40=rstar-risk(40),
+  derivative_at_minimum=derivative(xstar),boundary_minimum=xstar%in%c(25,65))
+ out[[tag]]<-row
+ audit[[tag]]<-list(result=row,knots=c(30,40,55),objective='Mean of per-completion cohort-standardized RV0 predicted risks, averaged over the same whole-cohort empirical covariate distribution in every RV scenario',
+  method='Bounded continuous optimization on the entire 25-65 range and each knot-delimited interval; compared all endpoints and knots, and stationary roots bracketed on a 0.5-mmHg derivative grid.',
+  whole_range_optimum=whole,segment_optima=seg,stationary_roots=roots,
+  candidates=data.frame(paco2=candidate,risk=values),derivative_grid=data.frame(paco2=dg,derivative=dy),
+  derivative_left=derivative(max(25,xstar-.01)),derivative_right=derivative(min(65,xstar+.01)),
+  frozen_401_RV0_grid_max_error=err,source_metadata=src,no_refit=TRUE,no_new_imputation=TRUE,
+  inferential_scope='Descriptive estimated nadir of the frozen fitted curve, conditional on this model and displayed range. No confidence interval for the location, ROC threshold, optimized clinical cutoff or causal treatment target is estimated. Relative-to-40 risk differences have the same minimizer because the reference is constant in x.')
+ cat(tag,'nadir=',sprintf('%.9f',xstar),'display=',sprintf('%.1f',xstar),'risk=',sprintf('%.9f',rstar),'grid error=',err,'\n')
+ rm(z,datasets,base);gc()
+}
+write.csv(do.call(rbind,out),file.path(O,'tables/RV0_minimum_risk_points.csv'),row.names=FALSE)
+jsonlite::write_json(audit,file.path(O,'quality/RV0_minima.json'),pretty=TRUE,auto_unbox=TRUE,digits=15)
