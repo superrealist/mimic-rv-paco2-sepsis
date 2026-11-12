@@ -1,0 +1,26 @@
+cat_read_input<-function(path,knots){
+ inp<-prag_read_input(path,knots)
+ inp$data$co2lo<-as.integer(inp$data$x<35);inp$data$co2hi<-as.integer(inp$data$x>45)
+ inp$source$co2lo<-inp$data$co2lo;inp$source$co2hi<-inp$data$co2hi
+ stopifnot(identical(inp$data$co2lo,as.integer(inp$source$co2lo)),
+  identical(inp$data$co2hi,as.integer(inp$source$co2hi)),all(inp$data$co2lo+inp$data$co2hi<=1))
+ inp
+}
+cat_setup<-function(){
+ prag_generic<<-unique(c(prag_generic,'co2lo','co2hi'))
+ BASE_PREPARE<<-prag_prepare
+ prag_prepare<<-function(inp){
+  p<-BASE_PREPARE(inp)
+  p$predictorMatrix['plow',]<-0L;p$predictorMatrix['plow',c('rv','x','age','sex','lvent')]<-1L
+  if(length(unique(na.omit(p$data$plow)))<2L)p$predictorMatrix['plow',]<-0L
+  p$predictorMatrix['pzero',]<-0L;p$predictorMatrix['pzero',c('rv','x','age','sex','lvent','sofa','lmap','pf','lmv')]<-1L
+  if('sofa_ord'%in%names(p$data)){
+   p$predictorMatrix['sofa_ord',]<-0L
+   p$predictorMatrix['sofa_ord',c('rv','x','age','sex','lvent','lmap','llac','lmv','pf')]<-1L
+  }
+  constant<-names(p$data)[vapply(p$data,function(z)length(unique(na.omit(z)))<2L,logical(1))]
+  p$predictorMatrix[,constant]<-0L
+  stopifnot(p$method[match('co2lo',names(p$data))]=='',p$method[match('co2hi',names(p$data))]=='')
+  p
+ }
+}

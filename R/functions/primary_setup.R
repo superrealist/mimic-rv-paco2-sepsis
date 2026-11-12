@@ -1,0 +1,21 @@
+setup<-function(){
+ source(FUN('imputation.R'))
+ source(FUN('exact_envelope.R'))
+ inp<-prag_read_input(INPUT,KN)
+ prag_formula<<-FORM_PRIMARY
+ BASE_PREPARE<<-prag_prepare
+ prag_prepare<<-function(inp){
+  p<-BASE_PREPARE(inp)
+  p$predictorMatrix['plow',]<-0L
+  p$predictorMatrix['plow',c('rv','x','age','sex','lvent')]<-1L
+  if(length(unique(na.omit(p$data$plow)))<2L)p$predictorMatrix['plow',]<-0L
+  p$predictorMatrix['pzero',]<-0L;p$predictorMatrix['pzero',c('rv','x','age','sex','lvent','sofa','lmap','pf','lmv')]<-1L
+  if('sofa_ord'%in%names(p$data)){
+   p$predictorMatrix['sofa_ord',]<-0L
+   p$predictorMatrix['sofa_ord',c('rv','x','age','sex','lvent','lmap','llac','lmv','pf')]<-1L
+  }
+  constant<-names(p$data)[vapply(p$data,function(z)length(unique(na.omit(z)))<2L,logical(1))]
+  p$predictorMatrix[,constant]<-0L;p
+ }
+ inp
+}
